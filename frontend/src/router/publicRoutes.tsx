@@ -9,7 +9,7 @@ export const publicRoutes:RouteObject[] = [
     loader: async ()=>{}
   },
   {
-    path: '/videoChat',
+    path: '/video-chat',
     element: <VideoChatPage/>,
     loader: async ()=>{}
   }

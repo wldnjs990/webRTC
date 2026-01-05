@@ -1,15 +1,24 @@
 const express = require("express");
 const http = require("http");
 const socketIO = require("socket.io");
+const cors = require("cors");
 const prisma = require("./lib/db");
+require("dotenv").config(); // 환경 변수 로드
 
 const app = express();
 const server = http.createServer(app);
 
+// CORS origin 설정 (쉼표로 구분된 문자열을 배열로 변환)
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(url => url.trim())
+  : ["http://localhost:5173", "http://localhost:5174"];
+
+console.log('🔐 허용된 CORS Origins:', allowedOrigins);
+
 // Socket.io 설정 (CORS 포함)
 const io = socketIO(server, {
   cors: {
-    origin: process.env.CLIENT_URL || ["http://localhost:5173", "http://localhost:5174"],
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -63,6 +72,13 @@ function validateCallback(callback, eventName) {
   }
   return true;
 }
+
+// CORS 미들웨어 설정 (HTTP API 요청용)
+app.use(cors({
+  origin: allowedOrigins,
+  methods: ["GET", "POST"],
+  credentials: true,
+}));
 
 // 서버가 클라이언트로부터 JSON 데이터를 받을 수 있게 해주는 미들웨어
 // express 프레임워크가 클라이언트 body값을 파싱하는 용도
@@ -133,7 +149,52 @@ io.on("connection", (socket) => {
         throw new Error("이미 존재하는 방입니다");
       }
 
-      // DB에 방 생성
+      // DB에서 기존 방 확인 (closedAt이 NULL인 활성 방)
+      const existingRoom = await prisma.room.findUnique({
+        where: { id: roomId }
+      });
+
+      // DB에 이미 존재하는 방이 있는 경우
+      if (existingRoom) {
+        // 닫힌 방이면 재사용 (재개방)
+        if (existingRoom.closedAt) {
+          const room = await prisma.room.update({
+            where: { id: roomId },
+            data: {
+              closedAt: null,
+              updatedAt: new Date(),
+              participants: {
+                create: {
+                  socketId: socket.id,
+                }
+              }
+            },
+            include: {
+              participants: true
+            }
+          });
+
+          // 메모리에도 저장
+          rooms.set(roomId, {
+            id: roomId,
+            host: socket.id,
+            users: new Set([socket.id]),
+            createdAt: room.createdAt.toISOString(),
+          });
+
+          socket.join(roomId);
+          socket.currentRoom = roomId;
+
+          console.log(`[방 재개방] ${roomId} by ${socket.id}`);
+          callback({ success: true, roomId });
+          return;
+        } else {
+          // 활성 방이면 에러
+          throw new Error("이미 존재하는 방입니다");
+        }
+      }
+
+      // DB에 방 생성 (새 방)
       const room = await prisma.room.create({
         data: {
           id: roomId,
@@ -151,6 +212,7 @@ io.on("connection", (socket) => {
       // 메모리에도 저장 (빠른 조회용)
       rooms.set(roomId, {
         id: roomId,
+        host: socket.id, // 방장 ID 저장
         users: new Set([socket.id]),
         createdAt: room.createdAt.toISOString(),
       });
@@ -326,6 +388,8 @@ async function leaveCurrentRoom(socket) {
     const room = rooms.get(socket.currentRoom);
 
     if (room) {
+      const isHost = room.host === socket.id;
+
       // DB에 퇴장 시각 기록
       try {
         await prisma.roomParticipant.updateMany({
@@ -342,23 +406,34 @@ async function leaveCurrentRoom(socket) {
         console.error(`[에러] DB 퇴장 기록 실패:`, error.message);
       }
 
-      // 메모리에서 사용자 제거
-      room.users.delete(socket.id);
+      // ⭐ 방장이 나가는 경우: 방 강제 종료
+      if (isHost) {
+        console.log(`[방장 퇴장] ${socket.id} - 방 강제 종료: ${socket.currentRoom}`);
 
-      console.log(
-        `[방 퇴장] ${socket.id} ← ${socket.currentRoom} (남은 인원: ${room.users.size}명)`
-      );
+        // 남아있는 모든 참가자들에게 방 종료 알림
+        socket.to(socket.currentRoom).emit("room-closed", {
+          reason: "host-left",
+          message: "방장이 나가서 방이 종료되었습니다.",
+          timestamp: new Date().toISOString(),
+        });
 
-      // 다른 사용자들에게 알림
-      socket.to(socket.currentRoom).emit("user-left", {
-        userId: socket.id,
-        timestamp: new Date().toISOString(),
-      });
-
-      // 방이 비었으면 삭제 (메모리 + DB)
-      if (room.users.size === 0) {
+        // 모든 참가자의 DB 퇴장 시각 업데이트
         try {
-          // DB에 방 종료 시각 기록
+          await prisma.roomParticipant.updateMany({
+            where: {
+              roomId: socket.currentRoom,
+              leftAt: null,
+            },
+            data: {
+              leftAt: new Date(),
+            }
+          });
+        } catch (error) {
+          console.error(`[에러] 참가자 일괄 퇴장 기록 실패:`, error.message);
+        }
+
+        // DB에 방 종료 시각 기록
+        try {
           await prisma.room.update({
             where: { id: socket.currentRoom },
             data: { closedAt: new Date() }
@@ -367,8 +442,39 @@ async function leaveCurrentRoom(socket) {
           console.error(`[에러] DB 방 종료 기록 실패:`, error.message);
         }
 
+        // 메모리에서 방 삭제
         rooms.delete(socket.currentRoom);
-        console.log(`[방 삭제] ${socket.currentRoom} (비어있음)`);
+        console.log(`[방 삭제] ${socket.currentRoom} (방장 퇴장)`);
+
+      } else {
+        // 일반 참가자가 나가는 경우
+        room.users.delete(socket.id);
+
+        console.log(
+          `[방 퇴장] ${socket.id} ← ${socket.currentRoom} (남은 인원: ${room.users.size}명)`
+        );
+
+        // 다른 사용자들에게 알림
+        socket.to(socket.currentRoom).emit("user-left", {
+          userId: socket.id,
+          timestamp: new Date().toISOString(),
+        });
+
+        // 방이 비었으면 삭제 (메모리 + DB)
+        if (room.users.size === 0) {
+          try {
+            // DB에 방 종료 시각 기록
+            await prisma.room.update({
+              where: { id: socket.currentRoom },
+              data: { closedAt: new Date() }
+            });
+          } catch (error) {
+            console.error(`[에러] DB 방 종료 기록 실패:`, error.message);
+          }
+
+          rooms.delete(socket.currentRoom);
+          console.log(`[방 삭제] ${socket.currentRoom} (비어있음)`);
+        }
       }
     }
 

@@ -1,0 +1,53 @@
+# Docker Compose 설정 파일
+# 용도: 로컬 개발 환경용 PostgreSQL 데이터베이스 실행
+
+services:
+  # 서비스 이름: postgres (원하는 이름으로 지정 가능)
+  postgres:
+    # 사용할 이미지: PostgreSQL 16버전 (Docker Hub에서 자동 다운로드)
+    image: postgres:16
+
+    # 컨테이너 이름 (docker ps에서 보이는 이름)
+    container_name: webrtc_postgres_dev
+
+    # 컨테이너가 항상 재시작되도록 설정 (PC 재부팅 후에도 자동 시작)
+    restart: unless-stopped
+
+    # 환경 변수 (PostgreSQL 설정)
+    environment:
+      # 데이터베이스 이름
+      POSTGRES_DB: webrtc_dev
+
+      # 데이터베이스 사용자 이름
+      POSTGRES_USER: dev
+
+      # 데이터베이스 비밀번호 (개발용이므로 간단하게 설정)
+      POSTGRES_PASSWORD: dev1234
+
+      # PostgreSQL 인코딩 (한글 지원)
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+
+    # 포트 매핑 (호스트:컨테이너)
+    # 내 PC의 5432포트로 접속하면 컨테이너의 5432포트로 연결됨
+    ports:
+      - "5432:5432"
+
+    # 볼륨 마운트 (데이터 영속성 보장)
+    # 컨테이너를 삭제해도 데이터가 사라지지 않도록 설정
+    volumes:
+      # Docker가 관리하는 볼륨에 데이터 저장
+      - postgres_data:/var/lib/postgresql/data
+
+    # 헬스체크 (컨테이너가 정상 작동하는지 확인)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d webrtc_dev"]
+      interval: 10s    # 10초마다 체크
+      timeout: 5s      # 5초 안에 응답 없으면 실패
+      retries: 5       # 5번 실패하면 unhealthy 상태
+
+# 볼륨 정의 (데이터 저장소)
+volumes:
+  postgres_data:
+    # Docker가 자동으로 관리하는 볼륨
+    # Windows: C:\ProgramData\Docker\volumes\
+    # Mac: ~/Library/Containers/com.docker.docker/Data/

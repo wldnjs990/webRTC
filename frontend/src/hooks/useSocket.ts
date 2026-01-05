@@ -15,8 +15,9 @@ const useSocket = () => {
   useEffect(() => {
     // ===== 싱글톤: 소켓이 없을 때만 생성 =====
     if (!socketInstance) {
-      console.log('🔌 새 소켓 인스턴스 생성')
-      socketInstance = io('http://localhost:3000', {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+      console.log('🔌 새 소켓 인스턴스 생성:', API_URL)
+      socketInstance = io(API_URL, {
         // 재연결 설정
         reconnection: true,
         reconnectionDelay: 1000,

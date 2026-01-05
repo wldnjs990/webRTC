@@ -141,11 +141,21 @@ const useWebRTC = (localStream: MediaStream | null) => {
     const handleUserLeft = (data: { userId: string }) => {
       console.log(`👋 사용자 퇴장: ${data.userId}`)
 
+      // PeerConnection 정리
       const pc = peerConnections.current.get(data.userId)
       if (pc) {
         pc.close()
         peerConnections.current.delete(data.userId)
       }
+
+      // 원격 스트림 상태에서 제거 (화면에서 사라지게 함)
+      setRemoteStreams(prev => {
+        const updated = new Map(prev)
+        updated.delete(data.userId)
+        return updated
+      })
+
+      console.log(`✅ 사용자 ${data.userId} 연결 및 스트림 정리 완료`)
     }
 
     // 이벤트 리스너 등록
@@ -165,7 +175,7 @@ const useWebRTC = (localStream: MediaStream | null) => {
       currentPeerConnections.forEach((pc) => pc.close())
       currentPeerConnections.clear()
     }
-  }, [socket, localStream])
+  }, [socket])
 
 
   // Offer 전송 함수 (특정 사용자에게 1:1 연결 요청)

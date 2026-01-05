@@ -20,6 +20,17 @@ interface UserJoinedData {
   timestamp: string
 }
 
+interface UserLeftData {
+  userId: string
+  timestamp: string
+}
+
+interface RoomClosedData {
+  reason: string
+  message: string
+  timestamp: string
+}
+
 const useRoom = () => {
   // 소켓 클라이언트 생성
   const { socket, isConnected } = useSocket()
@@ -108,19 +119,47 @@ const useRoom = () => {
     console.log('✅ 방 퇴장')
   }
 
-  // user-joined 이벤트 리스너 (새로운 사용자가 방에 입장했을 때)
+  // 이벤트 리스너 설정
   useEffect(() => {
     if (!socket.current) return
 
+    // 새로운 사용자 입장
     const handleUserJoined = (data: UserJoinedData) => {
       console.log(`👥 새 사용자 입장: ${data.userId}`)
       setNewUser(data.userId)
     }
 
+    // 사용자 퇴장
+    const handleUserLeft = (data: UserLeftData) => {
+      console.log(`👋 사용자 퇴장: ${data.userId}`)
+      // 상태에서 제거하는 로직은 useWebRTC에서 처리됨
+    }
+
+    // ⭐ 방장 퇴장으로 인한 방 강제 종료
+    const handleRoomClosed = (data: RoomClosedData) => {
+      console.log(`🚪 방 종료: ${data.message}`)
+      alert(data.message)
+
+      // 방 상태 초기화
+      setRoomId(null)
+      setError(null)
+      setExistingUsers([])
+      setNewUser(null)
+
+      // 홈페이지로 리다이렉션
+      if (window.location.pathname !== '/') {
+        window.location.href = '/'
+      }
+    }
+
     socket.current.on('user-joined', handleUserJoined)
+    socket.current.on('user-left', handleUserLeft)
+    socket.current.on('room-closed', handleRoomClosed)
 
     return () => {
       socket.current?.off('user-joined', handleUserJoined)
+      socket.current?.off('user-left', handleUserLeft)
+      socket.current?.off('room-closed', handleRoomClosed)
     }
   }, [socket])
 

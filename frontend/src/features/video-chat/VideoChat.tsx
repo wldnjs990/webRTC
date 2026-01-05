@@ -1,7 +1,11 @@
 import useVideoChat from "@/features/video-chat/hooks/useVideoChat"
 import { useEffect, useRef, useState } from "react"
+import { useSearchParams, useNavigate } from "react-router-dom"
 
 export default function VideoChat() {
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+
   const {
     // 상태
     localStream,
@@ -25,12 +29,51 @@ export default function VideoChat() {
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const [inputRoomId, setInputRoomId] = useState('')
 
+  // URL 쿼리 파라미터에서 방 정보 읽어서 자동 입장/생성
+  useEffect(() => {
+    const urlRoomId = searchParams.get('room')
+    const mode = searchParams.get('mode')
+
+    // 이미 방에 있거나, 소켓 연결 안됨, URL 정보 없음 -> 무시
+    if (roomId || !isConnected || !urlRoomId || !mode) {
+      return
+    }
+
+    // sessionStorage로 HMR 중복 방지
+    const joinKey = `auto-join-${urlRoomId}-${mode}`
+    if (sessionStorage.getItem(joinKey)) {
+      console.log(`⏭️ 이미 시도한 방 입장: ${urlRoomId}`)
+      return
+    }
+
+    console.log(`🚪 URL에서 방 정보 감지: ${urlRoomId} (모드: ${mode})`)
+    sessionStorage.setItem(joinKey, 'true')
+
+    if (mode === 'create') {
+      createRoom(urlRoomId)
+    } else if (mode === 'join') {
+      joinRoom(urlRoomId)
+    }
+  }, [searchParams, roomId, isConnected, createRoom, joinRoom])
+
   // 로컬 스트림 연결
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream
     }
   }, [localStream])
+
+  // 방 나가기 시 홈으로 리다이렉션
+  const handleLeaveRoom = () => {
+    leaveRoom()
+    // sessionStorage 정리
+    const urlRoomId = searchParams.get('room')
+    const mode = searchParams.get('mode')
+    if (urlRoomId && mode) {
+      sessionStorage.removeItem(`auto-join-${urlRoomId}-${mode}`)
+    }
+    navigate('/')
+  }
 
   return (
     <main style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
@@ -107,8 +150,8 @@ export default function VideoChat() {
           {/* 방 나가기 */}
           <div style={{ marginBottom: '20px' }}>
             <button
-              onClick={leaveRoom}
-              style={{ padding: '10px 20px', backgroundColor: '#ff9800', color: 'white' }}
+              onClick={handleLeaveRoom}
+              style={{ padding: '10px 20px', backgroundColor: '#ff9800', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
             >
               🚪 방 나가기
             </button>
