@@ -1,0 +1,89 @@
+// WebRTC 화상채팅 DB 스키마
+// PostgreSQL + Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===== 모델 정의 =====
+
+// 1. 방 (Room)
+model Room {
+  id        String   @id @default(cuid()) // 고유 ID (cuid = 충돌 방지 ID)
+  name      String?  @db.VarChar(200)     // 방 이름 (선택사항)
+  createdAt DateTime @default(now())      // 생성 시각
+  updatedAt DateTime @updatedAt           // 마지막 업데이트 시각
+  closedAt  DateTime? // 방 종료 시각 (null = 아직 활성)
+
+  // 관계: 한 방은 여러 참가자를 가질 수 있음
+  participants RoomParticipant[]
+
+  // 관계: 한 방은 여러 시그널링 로그를 가질 수 있음
+  signalingLogs SignalingLog[]
+
+  @@map("rooms") // 실제 테이블명
+  @@index([createdAt]) // 생성 시각 인덱스 (최근 방 조회 최적화)
+}
+
+// 2. 방 참가자 (RoomParticipant)
+// 누가, 어느 방에, 언제 참가했는지 기록
+model RoomParticipant {
+  id        String   @id @default(cuid())
+  roomId    String   // 방 ID (외래키)
+  socketId  String   @db.VarChar(100) // Socket.IO 소켓 ID
+  userId    String?  @db.VarChar(100) // 사용자 ID (인증 추가 시 사용)
+  joinedAt  DateTime @default(now())  // 참가 시각
+  leftAt    DateTime? // 퇴장 시각 (null = 아직 참가 중)
+
+  // 관계
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@map("room_participants")
+  @@index([roomId]) // 방별 참가자 조회 최적화
+  @@index([socketId]) // 소켓 ID로 빠른 조회
+  @@index([joinedAt]) // 시간별 조회
+}
+
+// 3. 시그널링 로그 (SignalingLog)
+// Offer, Answer, ICE Candidate 등 시그널링 이벤트 기록
+// 디버깅, 분석, 통계용
+model SignalingLog {
+  id        String   @id @default(cuid())
+  roomId    String?  // 방 ID (선택, 방 없이도 시그널링 가능)
+  from      String   @db.VarChar(100) // 발신자 소켓 ID
+  to        String?  @db.VarChar(100) // 수신자 소켓 ID
+  eventType String   @db.VarChar(50)  // 이벤트 타입: offer, answer, ice-candidate
+  payload   Json?    // 페이로드 (SDP, ICE Candidate 등) - JSONB로 저장
+  timestamp DateTime @default(now())  // 발생 시각
+
+  // 관계
+  room Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@map("signaling_logs")
+  @@index([roomId]) // 방별 로그 조회
+  @@index([eventType]) // 이벤트 타입별 조회
+  @@index([timestamp]) // 시간별 조회
+}
+
+// 4. 세션 통계 (SessionStats) - 선택사항
+// 각 참가자의 세션 품질 기록 (확장용)
+model SessionStats {
+  id              String   @id @default(cuid())
+  socketId        String   @db.VarChar(100)
+  roomId          String?  @db.VarChar(100)
+  connectionState String?  @db.VarChar(50) // connected, disconnected, failed
+  iceState        String?  @db.VarChar(50) // checking, connected, completed
+  duration        Int?     // 세션 지속 시간 (초)
+  bytesReceived   BigInt?  // 수신 바이트
+  bytesSent       BigInt?  // 송신 바이트
+  createdAt       DateTime @default(now())
+
+  @@map("session_stats")
+  @@index([socketId])
+  @@index([roomId])
+  @@index([createdAt])
+}
