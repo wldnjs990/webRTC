@@ -8,7 +8,7 @@ const server = http.createServer(app);
 // Socket.io 설정 (CORS 포함)
 const io = socketIO(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: process.env.CLIENT_URL || ["http://localhost:5173", "http://localhost:5174"],
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -80,6 +80,7 @@ app.get("/health", (req, res) => {
 
 // 활성 방 목록 조회
 app.get("/rooms", (req, res) => {
+  // 해당 DB(지금은 DB없어서 Map() 자료구조로 대체)에서 모든 방의 id와 사용자들 정보를 저장
   const roomList = Array.from(rooms.entries()).map(([id, room]) => ({
     id,
     userCount: room.users.size,
@@ -122,7 +123,8 @@ io.on("connection", (socket) => {
 
       console.log(`[방 생성] ${roomId} by ${socket.id}`);
 
-      // 성공 응답 (콜백만 사용)
+      // 생성자에게 응답 (콜백)
+      // 브로드캐스트 불필요 (본인만 있음)
       callback({ success: true, roomId });
     } catch (error) {
       console.error(`[에러] 방 생성 실패:`, error.message);
@@ -149,11 +151,13 @@ io.on("connection", (socket) => {
       const room = rooms.get(roomId);
 
       // 입장한 사용자에게 전달할 기존 참여자 목록 (본인 제외)
+      // 현재 방에 참여중인 유저들의 ID만 빼서 저장
       const existingUsers = Array.from(room.users);
 
       // 방 입장 처리
       socket.join(roomId);
       socket.currentRoom = roomId;
+      // 참여 사용자 id 추가
       room.users.add(socket.id);
 
       console.log(
@@ -315,7 +319,7 @@ server.listen(PORT, () => {
   WebRTC 시그널링 서버 실행 중
 ========================================
   포트: ${PORT}
-  클라이언트 URL: ${process.env.CLIENT_URL || "http://localhost:5173"}
+  클라이언트 URL: ${process.env.CLIENT_URL || "http://localhost:5173" || "http://localhost:5174"}
   시작 시간: ${new Date().toISOString()}
 ========================================
   `);
